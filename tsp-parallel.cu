@@ -33,7 +33,7 @@ printf("\n");
 }
 
 /* Print a permutation array */
-__global__ void
+__host__ __device__ void
 print_perm(int *perm, int size)
 {
   printf("Min Path: ");
@@ -52,7 +52,7 @@ typedef struct {
 } list_t;
 
 /* Dump list, including sizes */
-__global__ void
+__host__ __device__ void
 list_dump(list_t *list)
 {
     printf("%2d/%2d", list->cur_size, list->max_size);
@@ -63,7 +63,7 @@ list_dump(list_t *list)
 }
 
 /* Allocate list that can store up to 'max_size' elements */
-__global__ list_t *
+__host__ __device__ list_t *
 list_alloc(int max_size)
 {
     list_t *list = (list_t *)malloc(sizeof(list_t));
@@ -74,7 +74,7 @@ list_alloc(int max_size)
 }
 
 /* Free a list; call this to avoid leaking memory! */
-__global__ void
+__host__ __device__ void
 list_free(list_t *list)
 {
     free(list->values);
@@ -82,7 +82,7 @@ list_free(list_t *list)
 }
 
 /* Add a value to the end of the list */
-__global__ void
+__host__ __device__ void
 list_add(list_t *list, int value)
 {
     if (list->cur_size >= list->max_size) {
@@ -94,14 +94,14 @@ list_add(list_t *list, int value)
 }
 
 /* Return the current size of the list */
-__global__ int
+__host__ __device__ int
 list_size(list_t *list)
 {
     return list->cur_size;
 }
 
 /* Validate index */
-__global__ void
+__host__ __device__ void
 _list_check_index(list_t *list, int index)
 {
     if (index < 0 || index > list->cur_size - 1) {
@@ -111,7 +111,7 @@ _list_check_index(list_t *list, int index)
 }
 
 /* Get the value at given index */
-__global__ int
+__host__ __device__ int
 list_get(list_t *list, int index)
 {
     _list_check_index(list, index);
@@ -119,7 +119,7 @@ list_get(list_t *list, int index)
 }
 
 /* Remove the value at the given index */
-__global__ void
+__host__ __device__ void
 list_remove_at(list_t *list, int index)
 {
     _list_check_index(list, index);
@@ -133,7 +133,7 @@ list_remove_at(list_t *list, int index)
 array is allocated dynamically; the caller must free the space when no
 longer needed.
 */
-__global__ int *
+__host__ __device__ int *
 list_as_array(list_t *list)
 {
     int *rtn = (int *)malloc(list->max_size * sizeof(int));
@@ -144,7 +144,7 @@ list_as_array(list_t *list)
 }
 
 /* Calculate n! iteratively */
-__global__ unsigned long
+__host__ __device__ unsigned long
 factorial(int n)
 {
     if (n < 1) {
@@ -162,7 +162,7 @@ factorial(int n)
    in the range [0 .. size - 1]. The integers are allocated dynamically and
    should be free'd by the caller when no longer needed.
 */
-__global__ int *
+__host__ __device__ int *
 kth_perm(unsigned long k, int size)
 {
     unsigned long remain = k;
@@ -251,7 +251,7 @@ calc_cost(int* tsp, int* perm, int num_cities) {
 
 /* TSP Kernal */
 __global__ void
-TSP(int* tsp, int* mins, int* min_perms, unsigned long total_permutations, int num_threads, int num_cities) {
+TSP(int* tsp, int* mins, unsigned long* min_perms, unsigned long total_permutations, unsigned long num_threads, unsigned long num_cities) {
     int idx = threadIdx.x;
     unsigned long permutations_per_thread = total_permutations / num_threads;
     unsigned long perm_idx = idx * permutations_per_thread;
@@ -260,22 +260,22 @@ TSP(int* tsp, int* mins, int* min_perms, unsigned long total_permutations, int n
         stop_idx = total_permutations;
     }
 
-    printf("Thread %d | permutations_per_thread: %ld | perm_idx: %ld | stop_idx: %ld\n", idx, permutations_per_thread, perm_idx, stop_idx);
+    // printf("Thread %d | permutations_per_thread: %ld | perm_idx: %ld | stop_idx: %ld\n", idx, permutations_per_thread, perm_idx, stop_idx);
 
     int * perm = kth_perm(perm_idx, num_cities);
     int min = INT_MAX;
-    int min_perm = perm_idx;
+    unsigned long min_perm = perm_idx;
     
     while(perm_idx < stop_idx) {
-        printf("Thread %d | min: %d\n", idx, min);
+        // printf("Thread %d | min: %d\n", idx, min);
+        printf("Thread %d | permutations_per_thread: %ld | perm_idx: %ld | stop_idx: %ld\n", idx, permutations_per_thread, perm_idx, stop_idx);
         int cost = calc_cost(tsp, perm, num_cities);
         if(cost < min) {
             min = cost;
             min_perm = perm_idx;
         }
         next_perm(perm, num_cities);
-        perm_idx++;
-        
+        perm_idx = perm_idx + 1;
     }
 
     mins[idx] = min;
@@ -306,7 +306,6 @@ double now(void)
   clock_gettime(CLOCK_REALTIME, &current_time);
   return current_time.tv_sec + (current_time.tv_nsec / ONE_BILLION);
 }
-
 
 /* Print out help */
 void
@@ -355,29 +354,33 @@ main(int argc, char **argv) {
     // Copy tsp cost map to GPU global memory
     int tsp_size = num_cities * num_cities * sizeof(int);
     int mins_size = num_threads * sizeof(int);
+    int min_perms_size = num_threads * sizeof(unsigned long);
+
     int* h_tsp = create_tsp(num_cities, random_seed, tsp_size);
-    // print_tsp(h_tsp, num_cities, random_seed);
+    int* h_mins = (int*)malloc(mins_size);
+    unsigned long* h_min_perms = (unsigned long*)malloc(min_perms_size);
+
     int* d_tsp;
     int* d_mins;
-    int* d_min_perms;
+    unsigned long* d_min_perms;
+
     cudaMalloc((void **)&d_tsp, tsp_size);
     cudaMalloc((void **)&d_mins, mins_size);
-    cudaMalloc((void **)&d_min_perms, mins_size);
+    cudaMalloc((void **)&d_min_perms, min_perms_size);
+
     cudaMemcpy(d_tsp, h_tsp, tsp_size, cudaMemcpyHostToDevice);
 
-    // Round up so that no permutations get missed
     unsigned long total_permutations = factorial(num_cities);
     fprintf(stderr, "fact: %ld\n", total_permutations);
     // Call the kernel.
-    TSP<<<1, num_threads>>>(d_tsp, d_mins, d_min_perms, total_permutations, num_threads, num_cities);
-    cudaDeviceSynchronize();
+    TSP<<<1, num_threads>>>(d_tsp, d_mins, d_min_perms, total_permutations, (unsigned long)num_threads, (unsigned long)num_cities);
+    // cudaDeviceSynchronize();
 
-    int* h_mins = (int*)malloc(mins_size);
-    int* h_min_perms = (int*)malloc(mins_size);
     cudaMemcpy(h_mins, d_mins, mins_size, cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_min_perms, d_min_perms, mins_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_min_perms, d_min_perms, min_perms_size, cudaMemcpyDeviceToHost);
 
     int min = h_mins[0];
+    printf("Min Path Cost for %d: %d\n",0, h_mins[0]);
     for(int i = 1; i < num_threads; i++) {
         printf("Min Path Cost for %d: %d\n",i, h_mins[i]);
         if(h_mins[i] < min) {
@@ -387,11 +390,11 @@ main(int argc, char **argv) {
 
     printf("Min Path Cost: %d\n", min);
 
-    // for(int i = 1; i < num_threads; i++) {
-    //     if(h_mins[i] == min) {
-    //         print_perm(kth_perm(h_min_perms[i], num_cities), num_cities);
-    //     }
-    // }
+    for(int i = 1; i < num_threads; i++) {
+        if(h_mins[i] == min) {
+            print_perm(kth_perm(h_min_perms[i], num_cities), num_cities);
+        }
+    }
 
     /* Report time. */
     printf("    TOOK %5.3f seconds\n", now() - start_time);
