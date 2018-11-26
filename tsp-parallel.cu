@@ -253,9 +253,21 @@ calc_cost(int* tsp, int* perm, int num_cities) {
 __global__ void
 TSP(int* tsp, int* mins, unsigned long* min_perms, int total_permutations, int num_threads, int num_cities) {
     int idx = threadIdx.x;
+    
     extern __shared__ int tsp_shared[];
-    for(int i = 0; i < num_cities * num_cities; i++) {
-        tsp_shared[i] = tsp[i];
+    int tsp_size = num_cities * num_cities;
+    if(num_threads == tsp_size - 1) {
+        tsp_shared[idx] = tsp[idx];
+    } else {
+        int loads_per_thread = tsp_size / num_threads;
+        int start = idx * loads_per_thread;
+        int stop = (idx+1)*loads_per_thread;
+        if(idx == num_threads - 1) {
+            stop = tsp_size - 1;
+        }
+        for(int i = start; i < stop; i++) {
+            tsp_shared[i] = tsp[i];
+        }
     }
 
     unsigned long permutations_per_thread = total_permutations / num_threads;
@@ -270,7 +282,7 @@ TSP(int* tsp, int* mins, unsigned long* min_perms, int total_permutations, int n
     unsigned long min_perm = perm_idx;
     
     while(perm_idx < stop_idx) {
-        int cost = calc_cost(tsp, perm, num_cities);
+        int cost = calc_cost(tsp_shared, perm, num_cities);
         if(cost < min) {
             min = cost;
             min_perm = perm_idx;
