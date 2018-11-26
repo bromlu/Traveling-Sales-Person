@@ -17,26 +17,26 @@
 void
 print_tsp(int *tsp, int n, int random_seed)
 {
-printf("TSP (%d cities - seed %d)\n    ", n, random_seed);
-for (int j = 0;  j < n;  j++) {
-printf("%3d|", j);
-}
-printf("\n");
-for (int i = 0;  i < n;  i++) {
-printf("%2d|", i);
-for (int j = 0;  j < n;  j++) {
-printf("%4d", TSP_ELT(tsp, n, i, j));
-}
-printf("\n");
-}
-printf("\n");
+    printf("TSP (%d cities - seed %d)\n    ", n, random_seed);
+    for (int j = 0;  j < n;  j++) {
+        printf("%3d|", j);
+    }
+    printf("\n");
+    for (int i = 0;  i < n;  i++) {
+        printf("%2d|", i);
+        for (int j = 0;  j < n;  j++) {
+            printf("%4d", TSP_ELT(tsp, n, i, j));
+        }
+        printf("\n");
+    }
+    printf("\n");
 }
 
-/* Print a permutation array */
-__host__ __device__ void
-print_perm(int *perm, int size)
+/* Print a min and its path */
+void
+print_result(int *perm, int size, int min)
 {
-  printf("Min Path: ");
+  printf("Cost: %d Path: ", min);
   for (int k = 0; k < size; k++) {
 	printf("%4d", perm[k]);
   }
@@ -251,8 +251,13 @@ calc_cost(int* tsp, int* perm, int num_cities) {
 
 /* TSP Kernal */
 __global__ void
-TSP(int* tsp, int* mins, unsigned long* min_perms, unsigned long total_permutations, unsigned long num_threads, unsigned long num_cities) {
+TSP(int* tsp, int* mins, unsigned long* min_perms, int total_permutations, int num_threads, int num_cities) {
     int idx = threadIdx.x;
+    extern __shared__ int tsp_shared[];
+    for(int i = 0; i < num_cities * num_cities; i++) {
+        tsp_shared[i] = tsp[i];
+    }
+
     unsigned long permutations_per_thread = total_permutations / num_threads;
     unsigned long perm_idx = idx * permutations_per_thread;
     unsigned long stop_idx = (idx + 1) * permutations_per_thread;
@@ -260,15 +265,11 @@ TSP(int* tsp, int* mins, unsigned long* min_perms, unsigned long total_permutati
         stop_idx = total_permutations;
     }
 
-    // printf("Thread %d | permutations_per_thread: %ld | perm_idx: %ld | stop_idx: %ld\n", idx, permutations_per_thread, perm_idx, stop_idx);
-
     int * perm = kth_perm(perm_idx, num_cities);
     int min = INT_MAX;
     unsigned long min_perm = perm_idx;
     
     while(perm_idx < stop_idx) {
-        // printf("Thread %d | min: %d\n", idx, min);
-        printf("Thread %d | permutations_per_thread: %ld | perm_idx: %ld | stop_idx: %ld\n", idx, permutations_per_thread, perm_idx, stop_idx);
         int cost = calc_cost(tsp, perm, num_cities);
         if(cost < min) {
             min = cost;
@@ -371,28 +372,25 @@ main(int argc, char **argv) {
     cudaMemcpy(d_tsp, h_tsp, tsp_size, cudaMemcpyHostToDevice);
 
     unsigned long total_permutations = factorial(num_cities);
-    fprintf(stderr, "fact: %ld\n", total_permutations);
-    // Call the kernel.
-    TSP<<<1, num_threads>>>(d_tsp, d_mins, d_min_perms, total_permutations, (unsigned long)num_threads, (unsigned long)num_cities);
-    // cudaDeviceSynchronize();
+
+    /* Call the kernal */
+    TSP<<<1, num_threads, num_cities * num_cities * sizeof(int)>>>
+        (d_tsp, d_mins, d_min_perms, total_permutations, num_threads, num_cities);
 
     cudaMemcpy(h_mins, d_mins, mins_size, cudaMemcpyDeviceToHost);
     cudaMemcpy(h_min_perms, d_min_perms, min_perms_size, cudaMemcpyDeviceToHost);
 
+    /* Calculate min and print paths */
     int min = h_mins[0];
-    printf("Min Path Cost for %d: %d\n",0, h_mins[0]);
     for(int i = 1; i < num_threads; i++) {
-        printf("Min Path Cost for %d: %d\n",i, h_mins[i]);
         if(h_mins[i] < min) {
             min = h_mins[i];
         }
     }
-
-    printf("Min Path Cost: %d\n", min);
-
+    
     for(int i = 1; i < num_threads; i++) {
         if(h_mins[i] == min) {
-            print_perm(kth_perm(h_min_perms[i], num_cities), num_cities);
+            print_result(kth_perm(h_min_perms[i], num_cities), num_cities, min);
         }
     }
 
