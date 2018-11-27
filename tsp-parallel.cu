@@ -400,7 +400,7 @@ main(int argc, char **argv) {
         }
     }
     
-    for(int i = 1; i < num_threads; i++) {
+    for(int i = 0; i < num_threads; i++) {
         if(h_mins[i] == min) {
             print_result(kth_perm(h_min_perms[i], num_cities), num_cities, min);
         }
